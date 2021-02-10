@@ -1,0 +1,74 @@
+resources:
+- name: platform-automation-tasks
+  type: s3
+  source:
+    bucket: ((s3.bucket_name))
+    endpoint: ((s3.address))
+    access_key_id: ((s3.access_key))
+    secret_access_key: ((s3.secret_key))
+    regexp: platform-automation-tasks-(.*).zip
+
+- name: platform-automation-image
+  type: s3
+  source:
+    bucket: ((s3.bucket_name))
+    endpoint: ((s3.address))
+    access_key_id: ((s3.access_key))
+    secret_access_key: ((s3.secret_key))
+    regexp: vsphere-platform-automation-image-(.*).tar.gz
+
+- name: opsman-product
+  type: s3
+  source:
+    endpoint: ((s3.address))
+    bucket: ((s3.bucket_name))
+    access_key_id: ((s3.access_key))
+    secret_access_key: ((s3.secret_key))
+    regexp: ops-manager-vsphere-(.*).ova
+- name: configuration
+  type: git
+  source:
+    private_key: ((config-repo-key.private_key))
+    uri: ((config-repo-uri))
+- name: daily
+  type: time
+  source:
+    interval: 24h
+    
+jobs:
+- name: fetch-opsman
+  plan:
+  - in_parallel:
+    - get: platform-automation-tasks
+      params: { unpack: true }
+    - get: platform-automation-image
+      params: { unpack: true }
+    - get: configuration
+    - get: daily
+      trigger: true
+  - task: interpolate-env-creds
+    image: platform-automation-image
+    file: platform-automation-tasks/tasks/credhub-interpolate.yml
+    params:
+      CREDHUB_CLIENT: ((credhub-client))
+      CREDHUB_SECRET: ((credhub-secret))
+      CREDHUB_SERVER: ((credhub-server))
+      CREDHUB_CA_CERT: ((credhub-ca-cert.certificate))
+      PREFIX: '/concourse/main'
+      INTERPOLATION_PATHS: download-product
+      SKIP_MISSING: false
+    input_mapping:
+      files: configuration
+    output_mapping:
+      interpolated-files: interpolated-configs
+  - task: download-opsman-product
+    image: platform-automation-image
+    file: platform-automation-tasks/tasks/download-product.yml
+    params:
+      CONFIG_FILE: download-product/opsman.yml
+    input_mapping:
+      config: interpolated-configs
+  - put: opsman-product
+    params:
+      file: downloaded-product/*    
+
